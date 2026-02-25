@@ -55,7 +55,8 @@
       try {
         var slots = [
           {wrap: document.getElementById('adTop'), ins: document.querySelector('#adTop ins.adsbygoogle')},
-          {wrap: document.getElementById('adMid'), ins: document.querySelector('#adMid ins.adsbygoogle')}
+          {wrap: document.getElementById('adMid'), ins: document.querySelector('#adMid ins.adsbygoogle')},
+          {wrap: document.getElementById('adBottom'), ins: document.querySelector('#adBottom ins.adsbygoogle')}
         ];
         for (var i = 0; i < slots.length; i++) {
           var w = slots[i].wrap, el = slots[i].ins;
@@ -124,7 +125,7 @@
       margin: 4px 0; align-items: center; justify-content: center;
       border-radius: 10px; flex-shrink: 0; overflow: hidden;
     }
-    #adTop, #adMid { display: none; }
+    #adTop, #adMid, #adBottom { display: none; }
     .ad-slot.show { display: flex; }
     .ad-slot ins.adsbygoogle[data-ad-status="filled"] { min-height: 50px; }
     .rate-bar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 0; }
@@ -274,6 +275,7 @@
       .numpad { gap: 6px; }
       .numpad-row { gap: 10px; }
       .ad-slot#adMid { display: none; }
+      .ad-slot#adBottom { display: none; }
     }
   </style>
 </head>
@@ -341,6 +343,13 @@
       <button class="num-key" onclick="handleKey('0')">0</button>
       <button class="num-key clear" onclick="handleKey('C')">C</button>
     </div>
+  </div>
+
+  <!-- New ad slot added here -->
+  <div class="ad-slot" id="adBottom">
+    <ins class="adsbygoogle" style="display:block"
+      data-ad-client="ca-pub-9202142689270811" data-ad-slot="6322011824"
+      data-ad-format="auto" data-full-width-responsive="true"></ins>
   </div>
 
   <div class="footer">
@@ -485,9 +494,10 @@ function applyPremiumState(){
   if(isPremium){
     banner.classList.add('hidden');
     footerP.classList.add('hidden');
-    var t=document.getElementById('adTop'),m=document.getElementById('adMid');
+    var t=document.getElementById('adTop'),m=document.getElementById('adMid'),b=document.getElementById('adBottom');
     if(t)t.style.display='none';
     if(m)m.style.display='none';
+    if(b)b.style.display='none';
   }else{
     banner.classList.remove('hidden');
     footerP.classList.remove('hidden');
@@ -527,8 +537,8 @@ function handleRestore(){
 applyPremiumState();
 
 if(!window.__ADS_ENABLED__){
-  var t=document.getElementById('adTop'),m=document.getElementById('adMid');
-  if(t)t.style.display='none';if(m)m.style.display='none';
+  var t=document.getElementById('adTop'),m=document.getElementById('adMid'),b=document.getElementById('adBottom');
+  if(t)t.style.display='none';if(m)m.style.display='none';if(b)b.style.display='none';
 }
 </script>
 </body>
