@@ -258,6 +258,7 @@
       font-family: 'DM Sans', sans-serif;
     }
     .premium-cta:active { opacity: 0.9; transform: scale(0.98); }
+    .premium-cta:disabled { opacity: 0.5; }
     .premium-footer-links {
       display: flex; gap: 16px; margin-top: 16px;
     }
@@ -345,7 +346,6 @@
     </div>
   </div>
 
-  <!-- New ad slot added here -->
   <div class="ad-slot" id="adBottom">
     <ins class="adsbygoogle" style="display:block"
       data-ad-client="ca-pub-9202142689270811" data-ad-slot="6322011824"
@@ -368,15 +368,15 @@
   <div class="premium-title">プレミアムを解除</div>
   <div class="premium-features">
     <div class="premium-feature"><span class="premium-feature-icon">💱</span><span>SGD/JPYを即座に変換</span></div>
-    <div class="premium-feature"><span class="premium-feature-icon">📡</span><span>インターネット接続不要</span></div>
-    <div class="premium-feature"><span class="premium-feature-icon">⏱️</span><span>リアルタイム為替レート</span></div>
+    <div class="premium-feature"><span class="premium-feature-icon">📡</span><span>オフラインでも換算OK</span></div>
+    <div class="premium-feature"><span class="premium-feature-icon">⏱️</span><span>オンライン時はレート自動更新</span></div>
     <div class="premium-feature"><span class="premium-feature-icon">🚫</span><span>すべての広告を削除</span></div>
   </div>
   <div class="premium-plans">
     <div class="premium-plan" id="planYearly" onclick="selectPlan('yearly')">
       <div class="premium-plan-info">
         <span class="premium-plan-name">年間プラン</span>
-        <span class="premium-plan-price"><span class="original">¥36,400</span>¥2,500 / 年</span>
+        <span class="premium-plan-price" id="yearlyPrice"><span class="original">¥36,400</span>¥2,500 / 年</span>
       </div>
       <span class="premium-plan-badge">SAVE 93%</span>
       <div class="premium-plan-radio"></div>
@@ -384,7 +384,7 @@
     <div class="premium-plan selected" id="planWeekly" onclick="selectPlan('weekly')">
       <div class="premium-plan-info">
         <span class="premium-plan-name">3日間無料体験</span>
-        <span class="premium-plan-price">その後 ¥700 / 週</span>
+        <span class="premium-plan-price" id="weeklyPrice">その後 ¥700 / 週</span>
       </div>
       <div class="premium-plan-radio"></div>
     </div>
@@ -393,7 +393,7 @@
     <span class="premium-trial-label">無料体験を有効にする</span>
     <button class="premium-toggle" id="trialToggle" onclick="toggleTrial()"></button>
   </div>
-  <button class="premium-cta" id="premiumCta" onclick="handlePurchase()">Try for Free ❯</button>
+  <button class="premium-cta" id="premiumCta" onclick="handlePurchase()">無料で始める ❯</button>
   <div class="premium-footer-links">
     <a href="#" onclick="handleRestore();return false;">購入を復元</a>
     <a href="/privacy-policy.html">利用規約 & プライバシーポリシー</a>
@@ -433,7 +433,7 @@ async function fetchRate(){
       rate=newRate;
       lastUpdated=new Date();
       var c=localStorage.getItem('sgd_jpy');
-      if(c){var d=JSON.parse(c);if(Date.now()-d.ts>3600000){change24h=Math.round((rate-d.rate)/d.rate*10000)/100;}}
+      if(c){var d=JSON.parse(c);if(Date.now()-d.ts>86400000){change24h=Math.round((rate-d.rate)/d.rate*10000)/100;}}
       localStorage.setItem('sgd_jpy',JSON.stringify({rate,ts:Date.now()}));
       updateUI();
       return;
@@ -483,11 +483,186 @@ document.addEventListener('keydown',e=>{
 fetchRate();setInterval(fetchRate,300000);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 
-/* ========== PREMIUM ========== */
-let isPremium=localStorage.getItem('sgd_jpy_premium')==='1';
-let selectedPlan='weekly';
-let trialEnabled=true;
+/* ===================================================================
+   PREMIUM — Google Play Billing (Digital Goods API + Payment Request)
+   =================================================================== */
 
+/* --- SKU IDs (must match Play Console products) --- */
+const SKU_WEEKLY  = 'sgd_jpy_premium_weekly';   // ¥700/week with 3-day trial
+const SKU_YEARLY  = 'sgd_jpy_premium_yearly';   // ¥2,500/year
+
+let isPremium = false;
+let selectedPlan = 'weekly';
+let trialEnabled = true;
+let dgService = null;  // Digital Goods API service
+
+/* --- Initialize billing on load --- */
+async function initBilling() {
+  // Check if Digital Goods API is available (only inside TWA)
+  if (!('getDigitalGoodsService' in window)) {
+    console.log('[Billing] Digital Goods API not available (not in TWA)');
+    // Fall back to localStorage for web users
+    isPremium = localStorage.getItem('sgd_jpy_premium') === '1';
+    applyPremiumState();
+    return;
+  }
+
+  try {
+    dgService = await window.getDigitalGoodsService('https://play.google.com/billing');
+    console.log('[Billing] Google Play Billing connected');
+
+    // Check existing purchases (restore)
+    await checkExistingPurchases();
+
+    // Load real prices from Play Console
+    await loadSkuDetails();
+
+  } catch (e) {
+    console.log('[Billing] Play Billing not available:', e);
+    // Fallback for non-Play environments
+    isPremium = localStorage.getItem('sgd_jpy_premium') === '1';
+  }
+
+  applyPremiumState();
+}
+
+/* --- Check if user already has an active subscription --- */
+async function checkExistingPurchases() {
+  if (!dgService) return;
+  try {
+    const purchases = await dgService.listPurchases();
+    console.log('[Billing] Existing purchases:', purchases.length);
+    for (var i = 0; i < purchases.length; i++) {
+      var p = purchases[i];
+      if (p.itemId === SKU_WEEKLY || p.itemId === SKU_YEARLY) {
+        isPremium = true;
+        localStorage.setItem('sgd_jpy_premium', '1');
+        console.log('[Billing] Active subscription found:', p.itemId);
+        return;
+      }
+    }
+    // No active subscription
+    isPremium = false;
+    localStorage.removeItem('sgd_jpy_premium');
+  } catch (e) {
+    console.error('[Billing] Error checking purchases:', e);
+  }
+}
+
+/* --- Load real prices from Play Console --- */
+async function loadSkuDetails() {
+  if (!dgService) return;
+  try {
+    var details = await dgService.getDetails([SKU_WEEKLY, SKU_YEARLY]);
+    for (var i = 0; i < details.length; i++) {
+      var item = details[i];
+      var price = new Intl.NumberFormat(navigator.language, {
+        style: 'currency', currency: item.price.currency
+      }).format(item.price.value);
+
+      if (item.itemId === SKU_WEEKLY) {
+        document.getElementById('weeklyPrice').textContent = 'その後 ' + price + ' / 週';
+      } else if (item.itemId === SKU_YEARLY) {
+        document.getElementById('yearlyPrice').innerHTML =
+          '<span class="original">¥36,400</span>' + price + ' / 年';
+      }
+    }
+  } catch (e) {
+    console.log('[Billing] Could not load SKU details:', e);
+  }
+}
+
+/* --- Purchase flow --- */
+async function handlePurchase() {
+  var sku = selectedPlan === 'yearly' ? SKU_YEARLY : SKU_WEEKLY;
+  var cta = document.getElementById('premiumCta');
+
+  // If Digital Goods API is available, use real Play Billing
+  if (dgService) {
+    cta.disabled = true;
+    cta.textContent = '処理中...';
+
+    try {
+      var paymentMethods = [{
+        supportedMethods: 'https://play.google.com/billing',
+        data: { sku: sku }
+      }];
+      var paymentDetails = {
+        total: { label: 'Total', amount: { currency: 'JPY', value: '0' } }
+      };
+      var request = new PaymentRequest(paymentMethods, paymentDetails);
+      var response = await request.show();
+      var purchaseToken = response.details.purchaseToken;
+
+      // Verify & acknowledge on backend
+      var verified = await verifyPurchaseOnBackend(purchaseToken, sku);
+      if (verified) {
+        isPremium = true;
+        localStorage.setItem('sgd_jpy_premium', '1');
+        await response.complete('success');
+        console.log('[Billing] Purchase verified:', sku);
+        applyPremiumState();
+        closePremium();
+      } else {
+        await response.complete('fail');
+        alert('購入の確認に失敗しました。もう一度お試しください。');
+      }
+
+    } catch (e) {
+      console.log('[Billing] Purchase cancelled or failed:', e);
+    }
+
+    cta.disabled = false;
+    updateCtaText();
+    return;
+  }
+
+  // Fallback: web-only (no real billing)
+  isPremium = true;
+  localStorage.setItem('sgd_jpy_premium', '1');
+  applyPremiumState();
+  closePremium();
+}
+
+/* --- Backend verification --- */
+async function verifyPurchaseOnBackend(purchaseToken, sku) {
+  try {
+    var res = await fetch('/api/verify-purchase', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ purchaseToken: purchaseToken, sku: sku })
+    });
+    var data = await res.json();
+    return data.valid === true;
+  } catch (e) {
+    console.error('[Billing] Backend verification failed:', e);
+    return false;
+  }
+}
+
+/* --- Restore purchases --- */
+async function handleRestore() {
+  if (dgService) {
+    await checkExistingPurchases();
+    applyPremiumState();
+    if (isPremium) {
+      closePremium();
+      alert('プレミアムを復元しました！');
+    } else {
+      alert('有効なサブスクリプションが見つかりません。');
+    }
+  } else {
+    // Fallback
+    if (localStorage.getItem('sgd_jpy_premium') === '1') {
+      isPremium = true; applyPremiumState(); closePremium();
+      alert('プレミアムを復元しました！');
+    } else {
+      alert('有効なサブスクリプションが見つかりません。');
+    }
+  }
+}
+
+/* --- UI state --- */
 function applyPremiumState(){
   var banner=document.getElementById('premiumBanner');
   var footerP=document.getElementById('footerPremium');
@@ -522,19 +697,9 @@ function updateCtaText(){
   else if(selectedPlan==='yearly')cta.textContent='登録する \u2014 \u00A52,500/年 \u276F';
   else cta.textContent='登録する \u2014 \u00A5700/週 \u276F';
 }
-function handlePurchase(){
-  isPremium=true;
-  localStorage.setItem('sgd_jpy_premium','1');
-  applyPremiumState();
-  closePremium();
-}
-function handleRestore(){
-  if(localStorage.getItem('sgd_jpy_premium')==='1'){
-    isPremium=true;applyPremiumState();closePremium();
-    alert('プレミアムを復元しました！');
-  }else{alert('有効なサブスクリプションが見つかりません。');}
-}
-applyPremiumState();
+
+/* --- Init --- */
+initBilling();
 
 if(!window.__ADS_ENABLED__){
   var t=document.getElementById('adTop'),m=document.getElementById('adMid'),b=document.getElementById('adBottom');
